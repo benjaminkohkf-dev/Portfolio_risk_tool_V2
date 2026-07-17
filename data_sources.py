@@ -62,11 +62,14 @@ def _fetch_single_price_series(ticker: str, start: str, end: str) -> pd.Series:
     return s
 
 
-def fetch_returns(tickers: list[str], start, end) -> tuple[pd.DataFrame, list[str]]:
+def fetch_returns(tickers: list[str], start, end) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     """
     Fetch adjusted-close prices for each ticker, align on common trading
     dates, and convert to simple (not log) daily returns -- matching the
     "decimal daily return" convention used throughout risk_engine.py.
+
+    Also returns the aligned price series itself, so callers can compute
+    dollar NMV (= shares * latest price) without a second network round-trip.
 
     Parameters
     ----------
@@ -75,8 +78,12 @@ def fetch_returns(tickers: list[str], start, end) -> tuple[pd.DataFrame, list[st
 
     Returns
     -------
-    (returns_df, failed_tickers)
+    (returns_df, prices_df, failed_tickers)
         returns_df : DataFrame, index=dates, columns=tickers that succeeded
+        prices_df  : DataFrame, index=dates, columns=tickers that succeeded
+                     (adjusted-close prices, same alignment as returns_df
+                     but with one extra leading row, since returns lose the
+                     first observation to differencing)
         failed_tickers : list of "TICKER (reason)" strings for any ticker
                          that could not be fetched
     """
@@ -112,4 +119,4 @@ def fetch_returns(tickers: list[str], start, end) -> tuple[pd.DataFrame, list[st
             "-- widen the date range."
         )
     returns = prices.pct_change().dropna(how="all")
-    return returns, failed
+    return returns, prices, failed
