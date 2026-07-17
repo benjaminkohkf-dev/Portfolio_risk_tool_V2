@@ -99,7 +99,61 @@ errors). It works fine on a normal local machine or in a GitHub Codespace
 
 ---
 
+## Deploying to Streamlit Community Cloud (recommended — most stable option)
+
+If Codespaces' port-forwarding feels flaky (it can be — forwarded URLs go
+stale when the Codespace idles out, needing manual reconnection), Streamlit
+Community Cloud is a better fit: it's free, gives you a **permanent, stable
+URL** (like `yourname-yourapp.streamlit.app`), has no idle-timeout URL
+issues, and has full internet access — so the yfinance mode works fine.
+
+### 1. Push your code to GitHub
+
+Follow the earlier steps to get all these files into a GitHub repo:
+`app.py`, `risk_engine.py`, `data_sources.py`, `requirements.txt`,
+`.streamlit/config.toml`, `README.md` (and optionally `sample_data/`,
+`.devcontainer/` — those don't affect Streamlit Cloud either way).
+
+### 2. Deploy
+
+1. Go to **share.streamlit.io**.
+2. Sign in with your GitHub account (click **Continue with GitHub**, authorize it).
+3. Click **Create app** (or **New app**).
+4. Choose **"Deploy a public app from GitHub"** (or the equivalent option
+   for your account type).
+5. Fill in:
+   - **Repository**: select your repo (e.g. `yourname/factor-risk-dashboard`)
+   - **Branch**: `main`
+   - **Main file path**: `app.py`
+6. (Optional) Click **Advanced settings** if you want to pin a specific
+   Python version — otherwise it auto-detects a sensible default.
+7. Click **Deploy**.
+
+That's it — it'll install `requirements.txt` automatically and give you a
+live URL within a minute or two. Every time you push a new commit to
+`main`, the deployed app auto-updates.
+
+### Notes
+
+- **Free tier resource limits** are modest (roughly 1 GB RAM), but this
+  app is lightweight enough to run comfortably within that.
+- If your repo is **private**, Streamlit Community Cloud can still deploy
+  it (it just needs access granted through the GitHub OAuth step above) —
+  the app itself can still be set to public or restricted to specific
+  viewers under **App settings → Sharing**.
+- If the app ever shows a dependency error after deploying, check the
+  **"Manage app" → logs** panel (bottom-right of the running app) — it'll
+  show the exact `pip install` error, same idea as the matplotlib fix
+  from earlier.
+
+---
+
 ## Running this in a new GitHub Codespace
+
+Codespaces is a reasonable alternative if you want to *edit* the code in
+a full VS Code environment in the browser, rather than just run the
+deployed app — but for just running/using the dashboard, Streamlit
+Community Cloud (above) is simpler and more reliable.
 
 This lets you run the dashboard entirely in the browser, with no local
 Python install, and with full internet access for the yfinance mode.
