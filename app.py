@@ -125,11 +125,25 @@ elif mode == "Fetch live data (yfinance)":
         "in network-locked sandboxes, but works locally or in a GitHub Codespace."
     )
 
-    stock_tickers_input = st.sidebar.text_input(
-        "Stock tickers (comma-separated)",
-        value="AAPL,MSFT,NVDA,AMD,GOOGL,META,XOM,CVX,JPM,WMT",
+    st.sidebar.markdown("**Positions**")
+    st.sidebar.caption(
+        "Enter each ticker and the number of shares you hold "
+        "(negative shares = short position). The app fetches the latest "
+        "price and computes dollar NMV = shares × price automatically — "
+        "this list also determines which stocks get fetched, so there's no "
+        "separate ticker box to keep in sync."
     )
-    stock_tickers = [t.strip().upper() for t in stock_tickers_input.split(",") if t.strip()]
+    default_positions_df = pd.DataFrame({
+        "Ticker": ["AAPL", "MSFT", "NVDA"],
+        "Shares": [10, 10, 5],
+    })
+    positions_input_df = st.sidebar.data_editor(
+        default_positions_df, num_rows="dynamic", key="positions_editor", width="stretch"
+    )
+    positions_input_df = positions_input_df.dropna(subset=["Ticker"])
+    positions_input_df["Ticker"] = positions_input_df["Ticker"].astype(str).str.strip().str.upper()
+    positions_input_df = positions_input_df[positions_input_df["Ticker"] != ""]
+    stock_tickers = sorted(set(positions_input_df["Ticker"]))
 
     st.sidebar.markdown("**Factor / ETF mapping**")
     st.sidebar.caption("Edit tickers and give each a descriptive factor name.")
@@ -153,55 +167,79 @@ elif mode == "Fetch live data (yfinance)":
     start_date = col_a.date_input("Start date", value=start_date_default)
     end_date = col_b.date_input("End date", value=end_date_default)
 
-    st.sidebar.markdown("**Positions**")
-    st.sidebar.caption(
-        "Dollar NMV per stock ticker (same currency unit throughout, e.g. all $M). "
-        "Defaults to an equal-weighted $10 long in each name — edit to match your book."
-    )
-    default_positions_df = pd.DataFrame({
-        "Ticker": stock_tickers,
-        "NMV": [10.0] * len(stock_tickers),
-    })
-    positions_df = st.sidebar.data_editor(
-        default_positions_df, num_rows="dynamic", key="positions_editor", width="stretch"
-    )
-
     fetch_clicked = st.sidebar.button("📡 Fetch / Refresh data", type="primary")
 
     if fetch_clicked:
+        if not stock_tickers:
+            st.sidebar.error("Add at least one ticker to the Positions table first.")
+            st.stop()
         with st.spinner("Fetching prices from Yahoo Finance..."):
             try:
-                stock_returns, failed_stocks = fetch_returns(stock_tickers, start_date, end_date)
+                stock_returns, stock_prices, failed_stocks = fetch_returns(stock_tickers, start_date, end_date)
             except Exception as e:
                 st.sidebar.error(f"Stock fetch failed: {e}")
                 st.stop()
             try:
-                factor_returns_raw, failed_factors = fetch_returns(factor_tickers, start_date, end_date)
+                factor_returns_raw, _factor_prices, failed_factors = fetch_returns(
+                    factor_tickers, start_date, end_date
+                )
             except Exception as e:
                 st.sidebar.error(f"Factor/ETF fetch failed: {e}")
                 st.stop()
             rename_map = {t: ticker_to_name[t] for t in factor_returns_raw.columns if t in ticker_to_name}
             factor_returns = factor_returns_raw.rename(columns=rename_map)
 
+            # NMV = shares * latest available closing price -- computed here
+            # rather than asked of the user, since we already have the price
+            # data from the same fetch used for the regression.
+            latest_prices = stock_prices.iloc[-1]
+            shares_map = dict(zip(positions_input_df["Ticker"], positions_input_df["Shares"]))
+            nmv_dict, detail_rows, skipped_no_price = {}, [], []
+            for tkr, shares in shares_map.items():
+                if pd.isna(shares):
+                    continue
+                if tkr in latest_prices.index:
+                    price = float(latest_prices[tkr])
+                    nmv = float(shares) * price
+                    nmv_dict[tkr] = nmv
+                    detail_rows.append({"Ticker": tkr, "Shares": shares, "Latest Price": price, "NMV": nmv})
+                else:
+                    skipped_no_price.append(tkr)
+
             st.session_state["yf_stock_returns"] = stock_returns
             st.session_state["yf_factor_returns"] = factor_returns
             st.session_state["yf_failed"] = failed_stocks + failed_factors
+            st.session_state["yf_nmv"] = nmv_dict
+            st.session_state["yf_position_detail"] = pd.DataFrame(detail_rows).set_index("Ticker") \
+                if detail_rows else pd.DataFrame(columns=["Shares", "Latest Price", "NMV"])
+            st.session_state["yf_skipped_no_price"] = skipped_no_price
 
     if "yf_stock_returns" not in st.session_state:
-        st.info("Set your tickers and date range in the sidebar, then click **Fetch / Refresh data**.")
+        st.info("Enter your positions and date range in the sidebar, then click **Fetch / Refresh data**.")
         st.stop()
 
     stock_returns = st.session_state["yf_stock_returns"]
     factor_returns = st.session_state["yf_factor_returns"]
     if st.session_state.get("yf_failed"):
         st.warning("Some tickers could not be fetched: " + "; ".join(st.session_state["yf_failed"]))
+    if st.session_state.get("yf_skipped_no_price"):
+        st.warning(
+            "No price available for: " + ", ".join(st.session_state["yf_skipped_no_price"])
+            + " — excluded from NMV. Check the ticker symbol."
+        )
 
-    positions = pd.Series(
-        positions_df["NMV"].values, index=positions_df["Ticker"].astype(str).str.upper().values, name="NMV"
-    )
+    with st.expander("💵 Computed positions (shares × latest price)", expanded=False):
+        st.dataframe(
+            st.session_state["yf_position_detail"].style.format(
+                {"Shares": "{:,.0f}", "Latest Price": "{:,.2f}", "NMV": "{:,.2f}"}
+            ),
+            width="stretch",
+        )
+
+    positions = pd.Series(st.session_state["yf_nmv"], name="NMV")
     positions = positions[positions != 0]
     if positions.empty:
-        st.info("All positions are zero — enter non-zero NMVs in the sidebar Positions table.")
+        st.info("No non-zero positions yet — check your Shares entries in the sidebar.")
         st.stop()
 
     # Heuristic default grouping from factor labels, purely for display; user can override below.
